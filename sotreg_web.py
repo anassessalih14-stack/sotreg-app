@@ -669,6 +669,50 @@ def saisie_download_db():
                      download_name=f"sotreg_saisie.db",
                      mimetype="application/octet-stream")
 
+@app.route("/saisie/upload_db", methods=["POST"])
+@login_required(roles=["saisie","admin"])
+def saisie_upload_db():
+    """Charge la dernière DB sauvegardée par user1 pour reprendre la saisie."""
+    uploaded = request.files.get("dbfile")
+    if not uploaded or not uploaded.filename.lower().endswith(".db"):
+        flash("Veuillez sélectionner un fichier .db.", "error")
+        return redirect(url_for("saisie"))
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+            uploaded.save(tmp_path)
+
+        # Contrôle d'intégrité et vérification des tables avant tout remplacement.
+        check = sqlite3.connect(tmp_path)
+        integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
+        tables = {r[0] for r in check.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        check.close()
+        required = {"fact_lines", "fact_lines_sotreg", "vehicle_period", "tariffs"}
+        missing = required - tables
+        if integrity != "ok":
+            raise ValueError("La base SQLite est endommagée.")
+        if missing:
+            raise ValueError("Base incompatible — tables manquantes : " + ", ".join(sorted(missing)))
+
+        close_db()
+        shutil.copyfile(tmp_path, str(WORK_DB))
+        # Applique les petites migrations prévues par l'application.
+        db = sqlite3.connect(str(WORK_DB))
+        _auto_migrate(db)
+        db.close()
+        flash("Base chargée avec succès. Vous pouvez continuer la saisie.", "success")
+    except Exception as e:
+        flash(f"Chargement refusé : {e}", "error")
+    finally:
+        if tmp_path:
+            try: os.unlink(tmp_path)
+            except OSError: pass
+    return redirect(url_for("saisie"))
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TEMPLATES HTML
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1233,6 +1277,23 @@ SAISIE_HTML = """<!doctype html><html><head>""" + _BASE_STYLE + """
   </div>
 
   <!-- Bandeau export DB — toujours visible -->
+  <div style="margin-top:32px;border:1px solid #059669;border-radius:8px;
+              background:#052e2b;padding:16px 20px">
+    <div style="font-size:13px;font-weight:600;color:#6ee7b7;margin-bottom:5px">
+      📂 Reprendre une saisie existante
+    </div>
+    <div style="font-size:12px;color:#a7f3d0;margin-bottom:12px">
+      Au début de la session, chargez la dernière base téléchargée. Son contenu remplacera
+      la base temporaire actuellement présente sur Render.
+    </div>
+    <form method="post" action="/saisie/upload_db" enctype="multipart/form-data"
+          style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <input type="file" name="dbfile" accept=".db" required
+             style="flex:1;min-width:240px;background:var(--bg3);padding:8px;border-radius:6px">
+      <button type="submit" class="btn btn-success">📂 Charger cette base</button>
+    </form>
+  </div>
+
   <div style="margin-top:32px;border:1px solid #1d4ed8;border-radius:8px;
               background:#172554;padding:16px 20px;display:flex;align-items:center;
               gap:16px;flex-wrap:wrap">
