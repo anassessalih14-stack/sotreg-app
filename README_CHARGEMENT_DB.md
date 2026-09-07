@@ -2,6 +2,13 @@
 
 Cette version repart de l'application originale et ajoute une seule fonction : `user1` et `admin` peuvent charger une base SQLite sauvegardée depuis la page Saisie.
 
+Elle ajoute également la liaison automatique de la saisie :
+
+- choisir une entité filtre la liste aux circuits correspondants ;
+- choisir un circuit remplit automatiquement son entité ;
+- le kilométrage connu du circuit reste proposé automatiquement ;
+- les nouvelles associations sauvegardées sont réutilisées lors des saisies suivantes.
+
 ## Cycle obligatoire
 
 1. Au début : charger la dernière copie de `sotreg_saisie.db`.

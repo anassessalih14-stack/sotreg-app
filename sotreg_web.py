@@ -200,23 +200,25 @@ def api_kpi():
 @app.route("/api/entity_circuits")
 @login_required(roles=["saisie","admin"])
 def api_entity_circuits():
-    """Retourne circuits+km par entité — dernière valeur saisie (MAX id)."""
+    """Retourne tous les couples entité/circuit avec leur valeur KM la plus récente."""
     rows = query("""
-        SELECT entity, circuit, km_per_rotation
-        FROM fact_lines
-        WHERE period = (SELECT MAX(period) FROM fact_lines WHERE period != 'base')
-          AND entity IS NOT NULL AND entity != ''
-          AND circuit IS NOT NULL AND circuit != ''
-          AND km_per_rotation > 0
-          AND id IN (
-              SELECT MAX(id) FROM fact_lines
-              WHERE period = (SELECT MAX(period) FROM fact_lines WHERE period != 'base')
-                AND entity IS NOT NULL AND entity != ''
-                AND circuit IS NOT NULL AND circuit != ''
-                AND km_per_rotation > 0
-              GROUP BY entity, circuit
-          )
-        ORDER BY entity, circuit
+        WITH all_lines AS (
+          SELECT id, period, entity, circuit, km_per_rotation FROM fact_lines
+          UNION ALL
+          SELECT id, period, entity, circuit, km_per_rotation FROM fact_lines_sotreg
+        ), ranked AS (
+          SELECT entity, circuit, km_per_rotation, period AS latest_period, id AS latest_id,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY UPPER(TRIM(entity)), UPPER(TRIM(circuit))
+                   ORDER BY CASE WHEN period='base' THEN 0 ELSE 1 END DESC,
+                            period DESC, id DESC
+                 ) AS rn
+          FROM all_lines
+          WHERE entity IS NOT NULL AND TRIM(entity) != ''
+            AND circuit IS NOT NULL AND TRIM(circuit) != ''
+        )
+        SELECT entity, circuit, COALESCE(km_per_rotation,0) AS km_per_rotation
+        FROM ranked WHERE rn=1 ORDER BY latest_period DESC, latest_id DESC
     """)
     mapping = {}
     for r in rows:
@@ -1458,9 +1460,28 @@ function onCircuitBlur(input){
 
   const tr       = input.closest('tr');
   const entInput = tr.querySelector('input[data-key="entity"]');
-  const entity   = entInput ? entInput.value.trim() : '';
+  let entity   = entInput ? entInput.value.trim() : '';
   const kmInput  = tr.querySelector('input[data-key="km_per_rotation"]');
   if(!kmInput) return;
+
+  // Circuit choisi en premier : retrouver automatiquement son entité.
+  const matches = [];
+  const wanted = cir.toUpperCase();
+  for(const [ent, circuits] of Object.entries(_entityCircuits)){
+    for(const known of Object.keys(circuits)){
+      if(known.trim().toUpperCase() === wanted){ matches.push(ent); break; }
+    }
+  }
+  if(entInput && (!entity || !matches.includes(entity)) && matches.length){
+    // S'il existe plusieurs entités, utiliser la correspondance saisie le plus récemment.
+    entity = matches[0];
+    entInput.value = entity;
+    if(state.lines[i]) state.lines[i].entity = entity;
+    onEntityChange(entInput);
+    entInput.style.background = 'rgba(16,185,129,0.2)';
+    entInput.style.border = '1px solid #10b981';
+    setTimeout(()=>{ entInput.style.background='transparent'; entInput.style.border='none'; },1200);
+  }
 
   let km = '';
   // Priorité 1 : règle NAVETTE
